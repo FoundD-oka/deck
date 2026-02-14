@@ -15,8 +15,8 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
     };
 
     let title = match state.log_mode {
-        LogMode::Individual => "Log [Individual] (t: toggle)",
-        LogMode::Unified => "Log [Unified] (t: toggle)",
+        LogMode::Individual => "ログ [個別] (t:切替)",
+        LogMode::Unified => "ログ [統合] (t:切替)",
     };
 
     let visible_height = area.height.saturating_sub(2) as usize;
@@ -38,12 +38,12 @@ fn render_individual(state: &AppState, visible_height: usize) -> String {
     if let Some(session) = state.sessions.get(state.active_session) {
         let lines = state.log_store.lines(&session.id);
         if lines.is_empty() {
-            return "(no log output)".to_string();
+            return "(ログ出力なし)".to_string();
         }
         let start = lines.len().saturating_sub(visible_height);
         lines[start..].join("\n")
     } else {
-        "(no session selected)".to_string()
+        "(セッション未選択)".to_string()
     }
 }
 
@@ -61,7 +61,7 @@ fn render_unified(state: &AppState, visible_height: usize) -> String {
     }
 
     if all_lines.is_empty() {
-        return "(no log output)".to_string();
+        return "(ログ出力なし)".to_string();
     }
 
     let start = all_lines.len().saturating_sub(visible_height);

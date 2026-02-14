@@ -13,7 +13,12 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let label = format!("[{}] {} {}", i + 1, s.status.icon(), s.name);
+            let br_suffix = state
+                .br_tasks
+                .get(&s.id)
+                .map(|info| format!(" [{}/{}]", info.done, info.total))
+                .unwrap_or_default();
+            let label = format!("[{}] {} {}{}", i + 1, s.status.icon(), s.name, br_suffix);
             ListItem::new(label)
         })
         .collect();
@@ -27,7 +32,7 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
     let list = List::new(items)
         .block(
             Block::bordered()
-                .title("Sessions")
+                .title("セッション")
                 .border_style(border_style),
         )
         .highlight_style(Style::new().fg(PackedRgba::rgb(0, 0, 0)).bg(PackedRgba::rgb(0, 205, 205)));

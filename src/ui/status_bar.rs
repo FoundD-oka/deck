@@ -1,4 +1,4 @@
-use crate::app::AppState;
+use crate::app::{AppState, Panel};
 use crate::session::SessionStatus;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
@@ -6,6 +6,16 @@ use ftui_render::frame::Frame;
 use ftui_style::Style;
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::Widget;
+
+fn panel_hints(panel: Panel) -> &'static str {
+    match panel {
+        Panel::SessionList => "↑↓:選択 n:新規 d:削除 r:名変 m:入力切替",
+        Panel::DirTree => "↑↓:移動 Enter:開く h:隠しファイル",
+        Panel::FilePreview => "↑↓:スクロール e:エディタで開く",
+        Panel::Log => "t:個別/統合切替",
+        Panel::Input => "Enter:送信 ↑↓:履歴 Esc:戻る",
+    }
+}
 
 pub fn render(state: &AppState, frame: &mut Frame, area: Rect) {
     let mut running = 0u32;
@@ -24,9 +34,10 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
 
+    let hints = panel_hints(state.active_panel);
     let text = format!(
-        " Running: {} | Queued: {} | Done: {} | Error: {} | Input: {} | q:quit n:new d:del r:rename m:input-toggle",
-        running, queued, done, failed, needs_input
+        " 実行中:{} | 待機:{} | 完了:{} | 失敗:{} | 入力待ち:{} | {} | Tab:移動 q:終了",
+        running, queued, done, failed, needs_input, hints
     );
 
     let paragraph = Paragraph::new(text)

@@ -22,7 +22,7 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
 
     let paragraph = Paragraph::new(prompt).block(
         Block::bordered()
-            .title("Input")
+            .title("入力")
             .border_style(border_style),
     );
     paragraph.render(area, frame);

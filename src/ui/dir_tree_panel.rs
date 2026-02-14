@@ -14,15 +14,54 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
         Style::default()
     };
 
-    let dir_text = if let Some(session) = state.sessions.get(state.active_session) {
-        session.root_path.display().to_string()
+    let title = if state.dir_tree.show_hidden {
+        "ディレクトリ [隠し表示] (h:切替)"
     } else {
-        "(no session)".to_string()
+        "ディレクトリ (h:隠しファイル)"
     };
 
-    let paragraph = Paragraph::new(dir_text).block(
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let flat = state.dir_tree.flatten();
+
+    if flat.is_empty() {
+        let paragraph = Paragraph::new("(セッション未選択)").block(
+            Block::bordered()
+                .title(title)
+                .border_style(border_style),
+        );
+        paragraph.render(area, frame);
+        return;
+    }
+
+    let cursor = state.dir_tree.cursor;
+
+    // Keep cursor visible via scroll offset
+    let scroll_offset = if cursor >= visible_height {
+        cursor - visible_height + 1
+    } else {
+        0
+    };
+
+    let mut lines: Vec<String> = Vec::new();
+    for (i, entry) in flat.iter().enumerate().skip(scroll_offset).take(visible_height) {
+        let indent = "  ".repeat(entry.depth);
+        let icon = if entry.is_dir {
+            if entry.expanded {
+                "▼ "
+            } else {
+                "▶ "
+            }
+        } else {
+            "  "
+        };
+        let marker = if i == cursor { ">" } else { " " };
+        lines.push(format!("{}{}{}{}", marker, indent, icon, entry.name));
+    }
+
+    let content = lines.join("\n");
+    let paragraph = Paragraph::new(content).block(
         Block::bordered()
-            .title("Directory")
+            .title(title)
             .border_style(border_style),
     );
     paragraph.render(area, frame);

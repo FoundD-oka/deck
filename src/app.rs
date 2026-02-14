@@ -1,4 +1,8 @@
+use crate::br_poller::{self, BrTaskInfo};
 use crate::config::AppConfig;
+use crate::dir_tree::DirTree;
+use crate::file_preview::FilePreview;
+use crate::input_history::InputHistory;
 use crate::log_store::LogStore;
 use crate::needs_input::NeedsInputDetector;
 use crate::persistence;
@@ -57,6 +61,7 @@ pub enum LogMode {
 pub enum Msg {
     Key(KeyEvent),
     PtyPollTick,
+    BrPollTick,
     Noop,
 }
 
@@ -77,6 +82,10 @@ pub struct AppState {
     pub config: AppConfig,
     pub log_store: LogStore,
     pub log_mode: LogMode,
+    pub dir_tree: DirTree,
+    pub file_preview: FilePreview,
+    pub br_tasks: HashMap<Uuid, BrTaskInfo>,
+    pub input_history: InputHistory,
     // PTY handles (runtime-only, not serialized)
     pty_handles: HashMap<Uuid, PtyHandle>,
     // needs_input detection
@@ -101,6 +110,11 @@ enum CreateStep {
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let sessions = persistence::load_sessions(&config.sessions_file_path);
+        let dir_tree = if let Some(session) = sessions.first() {
+            DirTree::new(&session.root_path)
+        } else {
+            DirTree::empty()
+        };
         Self {
             sessions,
             active_session: 0,
@@ -109,6 +123,10 @@ impl AppState {
             config,
             log_store: LogStore::new(),
             log_mode: LogMode::Individual,
+            dir_tree,
+            file_preview: FilePreview::new(),
+            br_tasks: HashMap::new(),
+            input_history: InputHistory::new(),
             pty_handles: HashMap::new(),
             needs_input_detector: NeedsInputDetector::new(),
             last_output_at: HashMap::new(),
@@ -155,6 +173,7 @@ impl AppState {
                         }
                     }
                 }
+                self.save();
                 return Cmd::Quit;
             }
             (KeyCode::Char('q'), _) if self.active_panel != Panel::Input => {
@@ -188,10 +207,18 @@ impl AppState {
         // Panel-specific keys
         match self.active_panel {
             Panel::SessionList => self.handle_session_list_key(key),
+            Panel::DirTree => self.handle_dir_tree_key(key),
+            Panel::FilePreview => self.handle_file_preview_key(key),
             Panel::Log => self.handle_log_key(key),
             Panel::Input => self.handle_input_key(key),
-            _ => Cmd::None,
         }
+    }
+
+    fn sync_dir_tree(&mut self) {
+        if let Some(session) = self.sessions.get(self.active_session) {
+            self.dir_tree.set_root(&session.root_path);
+        }
+        self.file_preview.clear();
     }
 
     fn handle_session_list_key(&mut self, key: KeyEvent) -> Cmd<Msg> {
@@ -199,11 +226,13 @@ impl AppState {
             KeyCode::Up => {
                 if self.active_session > 0 {
                     self.active_session -= 1;
+                    self.sync_dir_tree();
                 }
             }
             KeyCode::Down => {
                 if self.active_session + 1 < self.sessions.len() {
                     self.active_session += 1;
+                    self.sync_dir_tree();
                 }
             }
             KeyCode::Char('n') => {
@@ -217,10 +246,12 @@ impl AppState {
                     let session_id = self.sessions[self.active_session].id;
                     self.pty_handles.remove(&session_id);
                     self.last_output_at.remove(&session_id);
+                    self.br_tasks.remove(&session_id);
                     self.sessions.remove(self.active_session);
                     if self.active_session >= self.sessions.len() && self.active_session > 0 {
                         self.active_session -= 1;
                     }
+                    self.sync_dir_tree();
                     self.save();
                 }
             }
@@ -253,6 +284,50 @@ impl AppState {
         Cmd::None
     }
 
+    fn handle_dir_tree_key(&mut self, key: KeyEvent) -> Cmd<Msg> {
+        match key.code {
+            KeyCode::Up => {
+                self.dir_tree.cursor_up();
+            }
+            KeyCode::Down => {
+                self.dir_tree.cursor_down();
+            }
+            KeyCode::Enter => {
+                if self.dir_tree.selected_is_dir() {
+                    self.dir_tree.toggle();
+                } else if let Some(path) = self.dir_tree.selected_path() {
+                    let path = path.to_path_buf();
+                    self.file_preview.load(&path);
+                }
+            }
+            KeyCode::Char('h') => {
+                self.dir_tree.toggle_hidden();
+            }
+            _ => {}
+        }
+        Cmd::None
+    }
+
+    fn handle_file_preview_key(&mut self, key: KeyEvent) -> Cmd<Msg> {
+        match key.code {
+            KeyCode::Up => {
+                self.file_preview.scroll_up();
+            }
+            KeyCode::Down => {
+                self.file_preview.scroll_down(20);
+            }
+            KeyCode::Char('e') => {
+                if let Some(path) = &self.file_preview.path {
+                    let _ = std::process::Command::new("open")
+                        .arg(path)
+                        .spawn();
+                }
+            }
+            _ => {}
+        }
+        Cmd::None
+    }
+
     fn handle_log_key(&mut self, key: KeyEvent) -> Cmd<Msg> {
         match key.code {
             KeyCode::Char('t') => {
@@ -274,16 +349,46 @@ impl AppState {
             KeyCode::Backspace => {
                 self.input_text.pop();
             }
+            KeyCode::Up => {
+                if let Some(text) = self.input_history.up() {
+                    self.input_text = text.to_string();
+                }
+            }
+            KeyCode::Down => {
+                match self.input_history.down() {
+                    Some(text) => self.input_text = text.to_string(),
+                    None => self.input_text.clear(),
+                }
+            }
             KeyCode::Enter => {
                 if !self.input_text.is_empty() && !self.sessions.is_empty() {
                     let session_idx = self.active_session;
                     let session_id = self.sessions[session_idx].id;
                     let input = self.input_text.clone();
                     self.input_text.clear();
+                    self.input_history.push(input.clone());
 
                     // Spawn PTY if not running
                     if !self.pty_handles.contains_key(&session_id) {
                         let root_path = self.sessions[session_idx].root_path.clone();
+
+                        // Validate directory still exists
+                        if !root_path.is_dir() {
+                            self.log_store.append(
+                                session_id,
+                                format!(
+                                    "エラー: ディレクトリが存在しません: {}\n",
+                                    root_path.display()
+                                )
+                                .as_bytes(),
+                            );
+                            let session = &mut self.sessions[session_idx];
+                            let _ = session.transition_to(SessionStatus::Running);
+                            let _ = session.transition_to(SessionStatus::Failed);
+                            self.save();
+                            return Cmd::None;
+                        }
+
                         match PtyHandle::spawn(&root_path, 80, 24) {
                             Ok(handle) => {
                                 let pid = handle.process_id();
@@ -300,10 +405,16 @@ impl AppState {
                                 self.save();
                             }
                             Err(e) => {
-                                self.log_store.append(
-                                    session_id,
-                                    format!("Failed to spawn PTY: {}\n", e).as_bytes(),
-                                );
+                                let err_msg = format!("{}", e);
+                                let msg = if err_msg.contains("No such file")
+                                    || err_msg.contains("not found")
+                                {
+                                    "エラー: 'claude' コマンドが見つかりません。Claude Code をインストールしてください。\n"
+                                        .to_string()
+                                } else {
+                                    format!("エラー: セッション開始に失敗: {}\n", e)
+                                };
+                                self.log_store.append(session_id, msg.as_bytes());
                                 let session = &mut self.sessions[session_idx];
                                 let _ = session.transition_to(SessionStatus::Running);
                                 let _ = session.transition_to(SessionStatus::Failed);
@@ -431,6 +542,21 @@ impl AppState {
         Cmd::None
     }
 
+    fn handle_br_poll(&mut self) -> Cmd<Msg> {
+        for session in &self.sessions {
+            let id = session.id;
+            match br_poller::poll(&session.root_path) {
+                Some(info) => {
+                    self.br_tasks.insert(id, info);
+                }
+                None => {
+                    self.br_tasks.remove(&id);
+                }
+            }
+        }
+        Cmd::None
+    }
+
     fn handle_create_dialog(&mut self, key: KeyEvent) -> Cmd<Msg> {
         match key.code {
             KeyCode::Escape => {
@@ -455,9 +581,14 @@ impl AppState {
                         let session = Session::new(name, path, &self.config.logs_root_path);
                         self.sessions.push(session);
                         self.active_session = self.sessions.len() - 1;
+                        self.sync_dir_tree();
                         self.save();
+                        self.creating_session = false;
+                    } else {
+                        // Show error: stay in dialog, switch to path step
+                        self.create_step = CreateStep::Path;
+                        self.create_path = format!("(未検出) {}", path.display());
                     }
-                    self.creating_session = false;
                 }
             }
             KeyCode::Char(c) => {
@@ -516,6 +647,7 @@ impl Model for AppState {
         match msg {
             Msg::Key(key) => self.handle_key(key),
             Msg::PtyPollTick => self.handle_pty_poll(),
+            Msg::BrPollTick => self.handle_br_poll(),
             Msg::Noop => Cmd::None,
         }
     }
@@ -573,18 +705,27 @@ impl Model for AppState {
     }
 
     fn subscriptions(&self) -> Vec<Box<dyn ftui_runtime::subscription::Subscription<Msg>>> {
+        let mut subs: Vec<Box<dyn ftui_runtime::subscription::Subscription<Msg>>> = Vec::new();
+
         let has_active = self.sessions.iter().any(|s| {
             s.status == SessionStatus::Running || s.status == SessionStatus::NeedsInput
         });
 
         if has_active {
-            vec![Box::new(Every::new(
+            subs.push(Box::new(Every::new(
                 Duration::from_millis(50),
                 || Msg::PtyPollTick,
-            ))]
-        } else {
-            vec![]
+            )));
         }
+
+        if !self.sessions.is_empty() {
+            subs.push(Box::new(Every::new(
+                Duration::from_secs(self.config.br_poll_interval_sec),
+                || Msg::BrPollTick,
+            )));
+        }
+
+        subs
     }
 }
 
@@ -597,14 +738,14 @@ impl AppState {
         use ftui_widgets::Widget;
 
         let text = if self.create_step == CreateStep::Name {
-            format!("Session name (Enter to skip): {}", self.create_name)
+            format!("セッション名 (Enterでスキップ): {}", self.create_name)
         } else {
-            format!("Work directory (Enter to use cwd): {}", self.create_path)
+            format!("作業ディレクトリ (Enterで現在地): {}", self.create_path)
         };
 
         let paragraph = Paragraph::new(text).block(
             Block::bordered()
-                .title("New Session")
+                .title("新規セッション")
                 .border_style(Style::new().fg(PackedRgba::rgb(205, 205, 0))),
         );
         paragraph.render(area, frame);
@@ -617,10 +758,10 @@ impl AppState {
         use ftui_widgets::paragraph::Paragraph;
         use ftui_widgets::Widget;
 
-        let text = format!("New name: {}", self.rename_text);
+        let text = format!("新しい名前: {}", self.rename_text);
         let paragraph = Paragraph::new(text).block(
             Block::bordered()
-                .title("Rename Session")
+                .title("名前変更")
                 .border_style(Style::new().fg(PackedRgba::rgb(205, 205, 0))),
         );
         paragraph.render(area, frame);
