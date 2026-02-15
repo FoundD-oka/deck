@@ -1,22 +1,14 @@
 use crate::app::{AppState, LogMode};
+use crate::ui::theme;
 use ftui_core::geometry::Rect;
-use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
-use ftui_style::Style;
-use ftui_widgets::block::Block;
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::Widget;
 
 pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
-    let border_style = if focused {
-        Style::new().fg(PackedRgba::rgb(0, 205, 205))
-    } else {
-        Style::default()
-    };
-
     let title = match state.log_mode {
-        LogMode::Individual => "ログ [個別] (t:切替)",
-        LogMode::Unified => "ログ [統合] (t:切替)",
+        LogMode::Individual => "Log [individual] (t:toggle)",
+        LogMode::Unified => "Log [unified] (t:toggle)",
     };
 
     let visible_height = area.height.saturating_sub(2) as usize;
@@ -26,11 +18,11 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
         LogMode::Unified => render_unified(state, visible_height),
     };
 
-    let paragraph = Paragraph::new(content).block(
-        Block::bordered()
-            .title(title)
-            .border_style(border_style),
-    );
+    let is_empty = content.starts_with('(');
+    let mut paragraph = Paragraph::new(content).block(theme::panel_block(title, focused));
+    if is_empty {
+        paragraph = paragraph.style(theme::placeholder_style());
+    }
     paragraph.render(area, frame);
 }
 

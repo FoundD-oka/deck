@@ -1,9 +1,9 @@
 use crate::app::AppState;
+use crate::ui::theme;
 use ftui_core::geometry::Rect;
-use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_style::Style;
-use ftui_widgets::block::Block;
+use ftui_widgets::borders::Borders;
 use ftui_widgets::list::{List, ListItem, ListState};
 use ftui_widgets::StatefulWidget;
 
@@ -23,19 +23,15 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect, focused: bool) {
         })
         .collect();
 
-    let border_style = if focused {
-        Style::new().fg(PackedRgba::rgb(0, 205, 205))
-    } else {
-        Style::default()
-    };
-
+    // 下ボーダーを外す（Directory パネルの上ボーダーと接合してズレるのを防ぐ）
+    let borders = Borders::TOP | Borders::LEFT | Borders::RIGHT;
     let list = List::new(items)
-        .block(
-            Block::bordered()
-                .title("セッション")
-                .border_style(border_style),
-        )
-        .highlight_style(Style::new().fg(PackedRgba::rgb(0, 0, 0)).bg(PackedRgba::rgb(0, 205, 205)));
+        .block(theme::panel_block_with("Sessions", focused, borders))
+        .highlight_style(
+            Style::new()
+                .fg(theme::HIGHLIGHT_FG)
+                .bg(theme::HIGHLIGHT_BG),
+        );
 
     let mut list_state = ListState::default();
     list_state.select(Some(state.active_session));

@@ -1,9 +1,10 @@
 use crate::app::{AppState, Panel};
 use crate::session::SessionStatus;
+use crate::ui::theme;
 use ftui_core::geometry::Rect;
-use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_style::Style;
+use ftui_text::{Span, Text};
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::Widget;
 
@@ -35,12 +36,42 @@ pub fn render(state: &AppState, frame: &mut Frame, area: Rect) {
     }
 
     let hints = panel_hints(state.active_panel);
-    let text = format!(
-        " 実行中:{} | 待機:{} | 完了:{} | 失敗:{} | 入力待ち:{} | {} | Tab:移動 q:終了",
-        running, queued, done, failed, needs_input, hints
-    );
+    let hint_style = Style::new().fg(theme::HINT_FG);
+    let dim_style = Style::new().fg(theme::HINT_FG).dim();
 
-    let paragraph = Paragraph::new(text)
-        .style(Style::new().fg(PackedRgba::rgb(229, 229, 229)).bg(PackedRgba::rgb(80, 80, 80)));
+    let spans = vec![
+        Span::raw(" "),
+        Span::styled(
+            format!("実行中:{}", running),
+            Style::new().fg(theme::STATUS_RUNNING),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("待機:{}", queued),
+            Style::new().fg(theme::STATUS_QUEUED),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("完了:{}", done),
+            Style::new().fg(theme::STATUS_DONE),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("失敗:{}", failed),
+            Style::new().fg(theme::STATUS_FAILED),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("入力待ち:{}", needs_input),
+            Style::new().fg(theme::STATUS_NEEDS_INPUT),
+        ),
+        Span::raw("  "),
+        Span::styled(hints, hint_style),
+        Span::raw("  "),
+        Span::styled("Tab:移動 q:終了", dim_style),
+    ];
+
+    let text = Text::from_spans(spans);
+    let paragraph = Paragraph::new(text).style(Style::new().bg(theme::BAR_BG));
     paragraph.render(area, frame);
 }

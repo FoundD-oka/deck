@@ -4,3 +4,4 @@ pub mod input_bar;
 pub mod log_panel;
 pub mod session_list;
 pub mod status_bar;
+pub mod theme;

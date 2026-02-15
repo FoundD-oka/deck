@@ -10,7 +10,7 @@ use crate::pty_manager::PtyHandle;
 use crate::session::{Session, SessionStatus};
 use crate::ui;
 
-use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
+use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, PasteEvent};
 use ftui_core::geometry::Rect;
 use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
@@ -60,6 +60,7 @@ pub enum LogMode {
 
 pub enum Msg {
     Key(KeyEvent),
+    Paste(PasteEvent),
     PtyPollTick,
     BrPollTick,
     Noop,
@@ -69,6 +70,7 @@ impl From<Event> for Msg {
     fn from(event: Event) -> Self {
         match event {
             Event::Key(k) => Msg::Key(k),
+            Event::Paste(p) => Msg::Paste(p),
             _ => Msg::Noop,
         }
     }
@@ -610,6 +612,24 @@ impl AppState {
         Cmd::None
     }
 
+    fn handle_paste(&mut self, text: String) -> Cmd<Msg> {
+        // Sanitize: remove newlines from pasted text for single-line inputs
+        let clean = text.replace('\n', "").replace('\r', "");
+
+        if self.creating_session {
+            if self.create_step == CreateStep::Name {
+                self.create_name.push_str(&clean);
+            } else {
+                self.create_path.push_str(&clean);
+            }
+        } else if self.renaming {
+            self.rename_text.push_str(&clean);
+        } else if self.active_panel == Panel::Input {
+            self.input_text.push_str(&clean);
+        }
+        Cmd::None
+    }
+
     fn handle_rename_dialog(&mut self, key: KeyEvent) -> Cmd<Msg> {
         match key.code {
             KeyCode::Escape => {
@@ -646,6 +666,7 @@ impl Model for AppState {
     fn update(&mut self, msg: Msg) -> Cmd<Msg> {
         match msg {
             Msg::Key(key) => self.handle_key(key),
+            Msg::Paste(paste) => self.handle_paste(paste.text),
             Msg::PtyPollTick => self.handle_pty_poll(),
             Msg::BrPollTick => self.handle_br_poll(),
             Msg::Noop => Cmd::None,
@@ -670,9 +691,9 @@ impl Model for AppState {
         // Body: sidebar | center | log_panel
         let cols = Flex::horizontal()
             .constraints([
-                Constraint::Fixed(28),
-                Constraint::Percentage(40.0),
-                Constraint::Min(30),
+                Constraint::Fixed(30),
+                Constraint::Min(20),
+                Constraint::Min(20),
             ])
             .split(body);
         let sidebar = cols[0];
@@ -731,9 +752,9 @@ impl Model for AppState {
 
 impl AppState {
     fn render_create_dialog(&self, frame: &mut Frame, area: Rect) {
-        use ftui_render::cell::PackedRgba;
         use ftui_style::Style;
         use ftui_widgets::block::Block;
+        use ftui_widgets::borders::BorderType;
         use ftui_widgets::paragraph::Paragraph;
         use ftui_widgets::Widget;
 
@@ -745,24 +766,26 @@ impl AppState {
 
         let paragraph = Paragraph::new(text).block(
             Block::bordered()
-                .title("新規セッション")
-                .border_style(Style::new().fg(PackedRgba::rgb(205, 205, 0))),
+                .border_type(BorderType::Rounded)
+                .title("New Session")
+                .border_style(Style::new().fg(ui::theme::DIALOG_BORDER)),
         );
         paragraph.render(area, frame);
     }
 
     fn render_rename_dialog(&self, frame: &mut Frame, area: Rect) {
-        use ftui_render::cell::PackedRgba;
         use ftui_style::Style;
         use ftui_widgets::block::Block;
+        use ftui_widgets::borders::BorderType;
         use ftui_widgets::paragraph::Paragraph;
         use ftui_widgets::Widget;
 
         let text = format!("新しい名前: {}", self.rename_text);
         let paragraph = Paragraph::new(text).block(
             Block::bordered()
-                .title("名前変更")
-                .border_style(Style::new().fg(PackedRgba::rgb(205, 205, 0))),
+                .border_type(BorderType::Rounded)
+                .title("Rename")
+                .border_style(Style::new().fg(ui::theme::DIALOG_BORDER)),
         );
         paragraph.render(area, frame);
     }
